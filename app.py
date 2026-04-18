@@ -1,11 +1,14 @@
 """
-Flask REST API for document text extraction.
-Provides a /api/upload endpoint that accepts PDF, DOCX, and XLSX files,
-extracts text using document_reader.py, and returns metadata + extracted text.
+Flask REST API for document processing: text extraction, LLM-powered structured
+data extraction, and compliance evaluation.
 
-Also provides a /api/extract endpoint that accepts a JSON payload with an
-'extracted_data' key and validates it against the DocumentData Pydantic model,
-returning the validated structured data or validation errors.
+Endpoints:
+  GET  /                – Serve the frontend UI (index.html)
+  POST /api/upload      – Accept a PDF/DOCX/XLSX file, extract raw text
+  POST /api/extract     – Accept raw text, return structured DocumentData via OpenAI
+  POST /api/evaluate    – Accept DocumentData JSON, return compliance status
+  GET  /api/health      – Health check
+  GET  /api/schema      – Return the DocumentData JSON schema
 """
 
 import logging
@@ -14,9 +17,11 @@ import time
 import tempfile
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+from openai import APIConnectionError, APIError, AuthenticationError, RateLimitError
 from pydantic import ValidationError
 
 from document_reader import extract_text_from_file
+from extraction_service import evaluate_compliance, extract_data_from_text
 from models import DocumentData
 
 app = Flask(__name__, static_folder=".", static_url_path="")
@@ -200,67 +205,168 @@ def schema():
 
 
 @app.route("/api/extract", methods=["POST"])
-def extract():
-    """Validate LLM-extracted document data against the DocumentData model.
+def extract_document_data():
+    """Accept raw document text and return structured DocumentData via OpenAI.
 
-    Request:  JSON body with a single key ``extracted_data`` whose value is a
-              dict containing the fields extracted by the LLM from an invoice
-              or quotation document.
+    Request:  JSON body with key ``text`` (str) containing raw document text.
 
     Response (success, HTTP 200):
         {
             "success": true,
-            "data": { ...validated DocumentData fields... }
+            "data": { ...DocumentData fields... }
         }
 
-    Response (validation error, HTTP 422):
-        {
-            "success": false,
-            "errors": [ ...Pydantic validation error details... ]
-        }
-
-    Response (bad request, HTTP 400):
+    Response (failure):
         {
             "success": false,
             "error": "..."
         }
     """
-    body = request.get_json(silent=True, force=True)
-    if body is None:
+    body = request.get_json(silent=True)
+    if not body or "text" not in body:
         return (
             jsonify(
                 {
                     "success": False,
-                    "error": (
-                        "Request body must be valid JSON with an 'extracted_data' key "
-                        "containing the fields to validate."
-                    ),
+                    "error": "Request body must be JSON with a 'text' field.",
                 }
             ),
             400,
         )
-    if "extracted_data" not in body:
+
+    raw_text = body["text"]
+    if not isinstance(raw_text, str) or not raw_text.strip():
         return (
             jsonify(
                 {
                     "success": False,
-                    "error": (
-                        "Request body must be JSON with an 'extracted_data' key "
-                        "containing the fields to validate."
-                    ),
+                    "error": "The 'text' field must be a non-empty string.",
                 }
             ),
             400,
         )
 
     try:
-        doc = DocumentData.model_validate(body["extracted_data"])
-        return jsonify({"success": True, "data": doc.model_dump()})
-    except ValidationError as exc:
+        document_data = extract_data_from_text(raw_text)
+        return jsonify({"success": True, "data": document_data.model_dump()})
+
+    except ValueError as exc:
+        logger.warning("Extraction validation error: %s", exc)
         return (
-            jsonify({"success": False, "errors": exc.errors()}),
-            422,
+            jsonify(
+                {
+                    "success": False,
+                    "error": str(exc),
+                }
+            ),
+            400,
         )
+
+    except AuthenticationError:
+        logger.error("OpenAI authentication error during /api/extract")
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "OpenAI authentication failed. Check your API key.",
+                }
+            ),
+            401,
+        )
+
+    except RateLimitError:
+        logger.warning("OpenAI rate limit exceeded during /api/extract")
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "Rate limit exceeded. Please retry after a moment.",
+                }
+            ),
+            429,
+        )
+
+    except APIConnectionError:
+        logger.error("OpenAI connection error during /api/extract")
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "Could not connect to the OpenAI API. Check your network.",
+                }
+            ),
+            503,
+        )
+
+    except APIError as exc:
+        logger.error("OpenAI API error during /api/extract: %s", exc)
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "An error occurred while communicating with the OpenAI API.",
+                }
+            ),
+            502,
+        )
+
+    except Exception:
+        logger.exception("Unexpected error during /api/extract")
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "An internal error occurred during extraction.",
+                }
+            ),
+            500,
+        )
+
+
+@app.route("/api/evaluate", methods=["POST"])
+def evaluate():
+    """Accept DocumentData as JSON and return a compliance evaluation.
+
+    Request:  JSON body matching the DocumentData schema fields.
+
+    Response (success, HTTP 200):
+        {
+            "success": true,
+            "data": { ...DocumentData fields... },
+            "compliance": { "status": "Green Light"|"Red Light", "reasons": [...] }
+        }
+
+    Response (failure):
+        {
+            "success": false,
+            "error": "..."
+        }
+    """
+    if not request.is_json:
+        return jsonify({"success": False, "error": "Request must be JSON."}), 415
+
+    try:
+        doc_data = DocumentData(**request.get_json())
+    except (TypeError, ValidationError):
+        logger.warning("Invalid DocumentData payload for /api/evaluate", exc_info=True)
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "Invalid payload: could not parse DocumentData fields.",
+                }
+            ),
+            400,
+        )
+
+    compliance = evaluate_compliance(doc_data)
+    return jsonify(
+        {
+            "success": True,
+            "data": doc_data.model_dump(),
+            "compliance": compliance,
+        }
+    )
 
 
 # --------------------------------------------------------------------------- #

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Document Reader – Text Extractor</title>
+  <title>Document Reader – Invoice &amp; Quotation Processor</title>
   <style>
     /* ===== Reset & Base ===== */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -225,6 +225,74 @@
       flex-wrap: wrap;
     }
 
+    /* ===== Structured Data / Compliance ===== */
+    #ai-card { display: none; }
+    #compliance-card { display: none; }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: .5rem;
+      margin-bottom: 1rem;
+    }
+    .field-item {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: .55rem .9rem;
+    }
+    .field-item .label {
+      font-size: .72rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    .field-item .value {
+      font-size: .9rem;
+      font-weight: 500;
+      margin-top: .15rem;
+      word-break: break-word;
+    }
+    .field-item .value.null-val { color: var(--muted); font-style: italic; }
+
+    .compliance-banner {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      padding: 1rem 1.25rem;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+    }
+    .compliance-banner.green {
+      background: #f0fdf4;
+      border: 1.5px solid #86efac;
+      color: var(--success);
+    }
+    .compliance-banner.red {
+      background: #fef2f2;
+      border: 1.5px solid #fca5a5;
+      color: var(--error);
+    }
+    .compliance-banner .icon { font-size: 1.5rem; }
+
+    .reasons-list {
+      list-style: none;
+      padding: 0;
+    }
+    .reasons-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: .5rem;
+      padding: .4rem 0;
+      font-size: .9rem;
+      color: var(--error);
+      border-bottom: 1px solid #fee2e2;
+    }
+    .reasons-list li:last-child { border-bottom: none; }
+    .reasons-list li::before { content: "✗"; font-weight: 700; flex-shrink: 0; }
+
     /* ===== Footer ===== */
     footer {
       margin-top: auto;
@@ -247,8 +315,8 @@
 
   <!-- ===== Header ===== -->
   <header>
-    <h1>📄 Document Reader</h1>
-    <p>Upload a PDF, DOCX, or XLSX file to extract its text content.</p>
+    <h1>📄 Document Processor</h1>
+    <p>Upload a PDF, DOCX, or XLSX file to extract and analyse its content.</p>
   </header>
 
   <!-- ===== Upload card ===== -->
@@ -363,6 +431,9 @@
         </svg>
         Copy Text
       </button>
+      <button class="btn btn-ghost" id="ai-extract-btn">
+        🤖 Extract with AI
+      </button>
       <button class="btn btn-ghost" id="new-btn">
         Upload Another File
       </button>
@@ -370,9 +441,50 @@
 
   </div><!-- /result card -->
 
+  <!-- ===== AI Extraction card ===== -->
+  <div class="card" id="ai-card" aria-live="polite">
+
+    <div class="result-header">
+      <h2>🤖 AI-Extracted Data</h2>
+      <button class="btn btn-ghost" id="evaluate-btn">
+        🚦 Evaluate Compliance
+      </button>
+    </div>
+
+    <div id="ai-fields" class="field-grid"></div>
+
+    <div id="ai-progress" style="display:none; margin-bottom:1rem;">
+      <p class="progress-label" id="ai-progress-label">Extracting with AI…</p>
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill indeterminate" id="ai-progress-fill"></div>
+      </div>
+    </div>
+    <div id="ai-alert" role="alert" style="display:none;"></div>
+
+  </div><!-- /ai-card -->
+
+  <!-- ===== Compliance card ===== -->
+  <div class="card" id="compliance-card" aria-live="polite">
+
+    <div class="result-header">
+      <h2>🚦 Compliance Result</h2>
+    </div>
+
+    <div id="compliance-banner" class="compliance-banner"></div>
+    <ul id="compliance-reasons" class="reasons-list"></ul>
+
+    <div id="compliance-progress" style="display:none; margin-bottom:1rem;">
+      <p class="progress-label">Evaluating compliance…</p>
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill indeterminate"></div>
+      </div>
+    </div>
+
+  </div><!-- /compliance-card -->
+
 </div><!-- /container -->
 
-<footer>Document Reader &mdash; Powered by Flask &amp; document_reader.py</footer>
+<footer>Document Processor &mdash; Powered by Flask, OpenAI &amp; document_reader.py</footer>
 
 <!-- ===== JavaScript ===== -->
 <script>
@@ -475,6 +587,9 @@
     uploadBtn.disabled = true;
     clearBtn.disabled  = true;
     resultCard.style.display = "none";
+    aiCard.style.display = "none";
+    complianceCard.style.display = "none";
+    lastExtractedData = null;
   }
 
   /* ---------- Drop zone events ---------- */
@@ -613,6 +728,170 @@
     hideAlert();
     resetUI();
     fileInput.click();
+  });
+
+  /* ========== AI Extraction & Compliance ========== */
+
+  const aiExtractBtn   = document.getElementById("ai-extract-btn");
+  const aiCard         = document.getElementById("ai-card");
+  const aiFields       = document.getElementById("ai-fields");
+  const aiProgress     = document.getElementById("ai-progress");
+  const aiProgressLbl  = document.getElementById("ai-progress-label");
+  const aiAlert        = document.getElementById("ai-alert");
+  const evaluateBtn    = document.getElementById("evaluate-btn");
+
+  const complianceCard    = document.getElementById("compliance-card");
+  const complianceBanner  = document.getElementById("compliance-banner");
+  const complianceReasons = document.getElementById("compliance-reasons");
+  const complianceProgress = document.getElementById("compliance-progress");
+
+  /* Human-readable labels for each DocumentData field */
+  const FIELD_LABELS = {
+    vendor_name:                  "Vendor Name",
+    vendor_id_or_tax_id:          "Tax / Vendor ID",
+    document_type:                "Document Type",
+    document_number:              "Document Number",
+    date_of_issue:                "Date of Issue",
+    po_number:                    "PO Number",
+    currency:                     "Currency",
+    subtotal_amount:              "Subtotal",
+    tax_amount:                   "Tax Amount",
+    total_gross_amount:           "Total (Gross)",
+    payment_terms:                "Payment Terms",
+    bank_details:                 "Bank Details",
+    billing_and_shipping_address: "Billing / Shipping Address",
+    delivery_time_or_terms:       "Delivery / Terms",
+  };
+
+  let lastExtractedData = null;   // stores the last DocumentData dict
+
+  function showAiAlert(msg, type = "error") {
+    aiAlert.textContent = msg;
+    aiAlert.className = type;
+    aiAlert.style.display = "block";
+  }
+  function hideAiAlert() {
+    aiAlert.style.display = "none";
+    aiAlert.textContent = "";
+  }
+
+  /* Render a DocumentData dict as a grid of field items */
+  function renderFieldGrid(data) {
+    aiFields.innerHTML = "";
+    for (const [key, label] of Object.entries(FIELD_LABELS)) {
+      const val = data[key];
+      const item = document.createElement("div");
+      item.className = "field-item";
+      const isNull = val === null || val === undefined;
+      item.innerHTML = `
+        <div class="label">${label}</div>
+        <div class="value${isNull ? " null-val" : ""}">${isNull ? "—" : String(val)}</div>
+      `;
+      aiFields.appendChild(item);
+    }
+  }
+
+  /* ---------- AI Extract button ---------- */
+  aiExtractBtn.addEventListener("click", async () => {
+    const rawText = extractedEl.textContent;
+    if (!rawText || rawText.trim() === "(No text extracted)") {
+      return;
+    }
+
+    hideAiAlert();
+    aiExtractBtn.disabled = true;
+    aiProgress.style.display = "block";
+    aiProgressLbl.textContent = "Extracting with AI…";
+    aiCard.style.display = "block";
+    aiFields.innerHTML = "";
+    complianceCard.style.display = "none";
+
+    try {
+      const response = await fetch("/api/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: rawText }),
+      });
+      const result = await response.json();
+
+      aiProgress.style.display = "none";
+      aiExtractBtn.disabled = false;
+
+      if (result.success) {
+        lastExtractedData = result.data;
+        renderFieldGrid(result.data);
+        evaluateBtn.disabled = false;
+        aiCard.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        showAiAlert(result.error || "AI extraction failed.");
+        evaluateBtn.disabled = true;
+      }
+    } catch (err) {
+      aiProgress.style.display = "none";
+      aiExtractBtn.disabled = false;
+      showAiAlert("Network error: could not reach the server.");
+    }
+  });
+
+  /* ---------- Evaluate Compliance button ---------- */
+  evaluateBtn.disabled = true;
+  evaluateBtn.addEventListener("click", async () => {
+    if (!lastExtractedData) return;
+
+    evaluateBtn.disabled = true;
+    complianceCard.style.display = "block";
+    complianceProgress.style.display = "block";
+    complianceBanner.innerHTML = "";
+    complianceReasons.innerHTML = "";
+
+    try {
+      const response = await fetch("/api/evaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(lastExtractedData),
+      });
+      const result = await response.json();
+
+      complianceProgress.style.display = "none";
+      evaluateBtn.disabled = false;
+
+      if (result.success) {
+        const isGreen = result.compliance.status === "Green Light";
+        complianceBanner.className =
+          "compliance-banner " + (isGreen ? "green" : "red");
+        complianceBanner.innerHTML = `
+          <span class="icon">${isGreen ? "✅" : "🔴"}</span>
+          ${result.compliance.status}
+        `;
+
+        complianceReasons.innerHTML = "";
+        if (result.compliance.reasons.length > 0) {
+          for (const reason of result.compliance.reasons) {
+            const li = document.createElement("li");
+            li.textContent = reason;
+            complianceReasons.appendChild(li);
+          }
+        } else {
+          const li = document.createElement("li");
+          li.style.color = "var(--success)";
+          li.style.borderBottom = "none";
+          li.innerHTML = "<span style='font-weight:700'>✓</span> All compliance rules passed.";
+          complianceReasons.appendChild(li);
+        }
+
+        complianceCard.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        complianceBanner.className = "compliance-banner red";
+        complianceBanner.innerHTML =
+          `<span class="icon">⚠️</span> ${result.error || "Compliance evaluation failed."}`;
+      }
+    } catch (err) {
+      complianceProgress.style.display = "none";
+      evaluateBtn.disabled = false;
+      complianceBanner.className = "compliance-banner red";
+      complianceBanner.innerHTML =
+        '<span class="icon">⚠️</span> Network error: could not reach the server.';
+    }
   });
 </script>
 
