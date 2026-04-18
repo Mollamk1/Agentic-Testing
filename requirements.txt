@@ -1,3 +1,6 @@
 pdfplumber
 python-docx
+pandas
 openpyxl
+pdf2image
+pytesseract
