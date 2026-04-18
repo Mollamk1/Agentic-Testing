@@ -874,7 +874,7 @@
         } else {
           const li = document.createElement("li");
           li.style.color = "var(--success)";
-          li.style.cssText += ";border-bottom:none;";
+          li.style.borderBottom = "none";
           li.innerHTML = "<span style='font-weight:700'>✓</span> All compliance rules passed.";
           complianceReasons.appendChild(li);
         }

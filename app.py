@@ -256,7 +256,7 @@ def extract_document_data():
             jsonify(
                 {
                     "success": False,
-                    "error": "Invalid request: unable to process the provided text.",
+                    "error": str(exc),
                 }
             ),
             400,
