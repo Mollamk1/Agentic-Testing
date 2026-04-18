@@ -2,6 +2,10 @@
 Flask REST API for document text extraction.
 Provides a /api/upload endpoint that accepts PDF, DOCX, and XLSX files,
 extracts text using document_reader.py, and returns metadata + extracted text.
+
+Also provides a /api/extract endpoint that accepts a JSON payload with an
+'extracted_data' key and validates it against the DocumentData Pydantic model,
+returning the validated structured data or validation errors.
 """
 
 import logging
@@ -10,8 +14,10 @@ import time
 import tempfile
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+from pydantic import ValidationError
 
 from document_reader import extract_text_from_file
+from models import DocumentData
 
 app = Flask(__name__, static_folder=".", static_url_path="")
 
@@ -181,6 +187,80 @@ def upload_file():
 def health():
     """Simple health-check endpoint."""
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/schema", methods=["GET"])
+def schema():
+    """Return the JSON schema for the DocumentData model.
+
+    Clients (or LLM orchestration layers) can fetch this schema to understand
+    the expected structured-output format before calling /api/extract.
+    """
+    return jsonify(DocumentData.model_json_schema())
+
+
+@app.route("/api/extract", methods=["POST"])
+def extract():
+    """Validate LLM-extracted document data against the DocumentData model.
+
+    Request:  JSON body with a single key ``extracted_data`` whose value is a
+              dict containing the fields extracted by the LLM from an invoice
+              or quotation document.
+
+    Response (success, HTTP 200):
+        {
+            "success": true,
+            "data": { ...validated DocumentData fields... }
+        }
+
+    Response (validation error, HTTP 422):
+        {
+            "success": false,
+            "errors": [ ...Pydantic validation error details... ]
+        }
+
+    Response (bad request, HTTP 400):
+        {
+            "success": false,
+            "error": "..."
+        }
+    """
+    body = request.get_json(silent=True, force=True)
+    if body is None:
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": (
+                        "Request body must be valid JSON with an 'extracted_data' key "
+                        "containing the fields to validate."
+                    ),
+                }
+            ),
+            400,
+        )
+    if "extracted_data" not in body:
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": (
+                        "Request body must be JSON with an 'extracted_data' key "
+                        "containing the fields to validate."
+                    ),
+                }
+            ),
+            400,
+        )
+
+    try:
+        doc = DocumentData.model_validate(body["extracted_data"])
+        return jsonify({"success": True, "data": doc.model_dump()})
+    except ValidationError as exc:
+        return (
+            jsonify({"success": False, "errors": exc.errors()}),
+            422,
+        )
 
 
 # --------------------------------------------------------------------------- #
