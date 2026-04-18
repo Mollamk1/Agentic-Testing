@@ -12,6 +12,8 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
 from document_reader import extract_text_from_file
+from extraction_service import extract_data_from_text
+from openai import AuthenticationError, APIConnectionError, RateLimitError
 
 app = Flask(__name__, static_folder=".", static_url_path="")
 
@@ -175,6 +177,83 @@ def upload_file():
         # Always clean up the temporary file
         if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
+
+
+@app.route("/api/extract", methods=["POST"])
+def extract_data():
+    """
+    Extract structured invoice/quotation data from raw text using OpenAI.
+
+    Request:  JSON body with key 'text' containing the raw document text.
+    Response: JSON representation of :class:`DocumentData` (on success)
+                          or: JSON with 'success' and 'error' keys (on failure)
+
+    Example request body::
+
+        {"text": "Invoice from Acme Corp, Invoice #INV-001, Total $500 USD"}
+
+    Example success response::
+
+        {
+            "vendor_name": "Acme Corp",
+            "document_number": "INV-001",
+            "total_gross_amount": 500.0,
+            "currency": "USD",
+            ...
+        }
+    """
+    payload = request.get_json(silent=True)
+    if not payload or "text" not in payload:
+        return jsonify({"success": False, "error": "Request body must be JSON with a 'text' field."}), 400
+
+    raw_text = payload["text"]
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        return jsonify({"success": False, "error": "'text' field must be a non-empty string."}), 400
+
+    try:
+        document_data = extract_data_from_text(raw_text)
+        return jsonify(document_data.model_dump())
+
+    except ValueError as exc:
+        logger.warning("Invalid input for extraction: %s", exc)
+        return jsonify({"success": False, "error": "Invalid input: text must be a non-empty string."}), 400
+
+    except AuthenticationError as exc:
+        logger.error("OpenAI authentication failed during /api/extract: %s", exc)
+        return jsonify(
+            {
+                "success": False,
+                "error": "API authentication failed. Please check the OPENAI_API_KEY configuration.",
+            }
+        ), 502
+
+    except APIConnectionError as exc:
+        logger.error("OpenAI connection error during /api/extract: %s", exc)
+        return jsonify(
+            {
+                "success": False,
+                "error": "Could not connect to the AI service. Please check network connectivity and try again.",
+            }
+        ), 502
+
+    except RateLimitError as exc:
+        logger.error("OpenAI rate limit exceeded during /api/extract: %s", exc)
+        return jsonify(
+            {
+                "success": False,
+                "error": "AI service rate limit exceeded. Please wait a moment before retrying.",
+            }
+        ), 429
+
+    except Exception:
+        logger.exception("Unexpected error during data extraction")
+        return jsonify(
+            {
+                "success": False,
+                "error": "An error occurred during extraction. "
+                         "Please check the server logs for details.",
+            }
+        ), 500
 
 
 @app.route("/api/health", methods=["GET"])
