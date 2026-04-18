@@ -6,3 +6,5 @@ pdf2image
 pytesseract
 flask
 flask-cors
+openai>=1.0.0
+pydantic>=2.0.0

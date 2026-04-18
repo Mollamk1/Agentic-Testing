@@ -11,7 +11,10 @@ import tempfile
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
+from openai import APIConnectionError, APIError, AuthenticationError, RateLimitError
+
 from document_reader import extract_text_from_file
+from extraction_service import extract_data_from_text
 
 app = Flask(__name__, static_folder=".", static_url_path="")
 
@@ -175,6 +178,52 @@ def upload_file():
         # Always clean up the temporary file
         if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
+
+
+@app.route("/api/extract", methods=["POST"])
+def extract_document_data():
+    """
+    Accept raw text and return structured DocumentData extracted via OpenAI.
+
+    Request:  JSON with key 'text' (str) – raw text from a document.
+    Response: JSON with keys: success, data (on success)
+                          or: success, error (on failure)
+    """
+    body = request.get_json(silent=True)
+    if not body or "text" not in body:
+        return jsonify({"success": False, "error": "Request body must contain a 'text' field."}), 400
+
+    raw_text = body["text"]
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        return jsonify({"success": False, "error": "The 'text' field must be a non-empty string."}), 400
+
+    try:
+        document_data = extract_data_from_text(raw_text)
+        return jsonify({"success": True, "data": document_data.model_dump()})
+
+    except ValueError as exc:
+        logger.warning("Extraction validation error: %s", exc)
+        return jsonify({"success": False, "error": "Invalid request: unable to process the provided text."}), 400
+
+    except AuthenticationError as exc:
+        logger.error("OpenAI authentication error: %s", exc)
+        return jsonify({"success": False, "error": "OpenAI authentication failed. Check your API key."}), 401
+
+    except RateLimitError as exc:
+        logger.warning("OpenAI rate limit exceeded: %s", exc)
+        return jsonify({"success": False, "error": "Rate limit exceeded. Please retry after a moment."}), 429
+
+    except APIConnectionError as exc:
+        logger.error("OpenAI connection error: %s", exc)
+        return jsonify({"success": False, "error": "Could not connect to the OpenAI API. Check your network."}), 503
+
+    except APIError as exc:
+        logger.error("OpenAI API error: %s", exc)
+        return jsonify({"success": False, "error": "An error occurred while communicating with the OpenAI API."}), 502
+
+    except Exception as exc:
+        logger.exception("Unexpected error during data extraction")
+        return jsonify({"success": False, "error": "An internal error occurred during extraction."}), 500
 
 
 @app.route("/api/health", methods=["GET"])
