@@ -203,7 +203,7 @@ def extract_document_data():
 
     except ValueError as exc:
         logger.warning("Extraction validation error: %s", exc)
-        return jsonify({"success": False, "error": str(exc)}), 400
+        return jsonify({"success": False, "error": "Invalid request: unable to process the provided text."}), 400
 
     except AuthenticationError as exc:
         logger.error("OpenAI authentication error: %s", exc)
@@ -219,7 +219,7 @@ def extract_document_data():
 
     except APIError as exc:
         logger.error("OpenAI API error: %s", exc)
-        return jsonify({"success": False, "error": f"OpenAI API error: {exc.message}"}), 502
+        return jsonify({"success": False, "error": "An error occurred while communicating with the OpenAI API."}), 502
 
     except Exception as exc:
         logger.exception("Unexpected error during data extraction")

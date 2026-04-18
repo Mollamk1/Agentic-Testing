@@ -161,42 +161,18 @@ def extract_data_from_text(
         )
         return document_data
 
-    except AuthenticationError as exc:
-        logger.error("OpenAI authentication failed: %s", exc)
-        raise AuthenticationError(
-            message=(
-                "OpenAI authentication failed. "
-                "Please check that your OPENAI_API_KEY is valid."
-            ),
-            response=exc.response,
-            body=exc.body,
-        ) from exc
+    except AuthenticationError:
+        logger.error("OpenAI authentication failed. Check that OPENAI_API_KEY is valid.")
+        raise
 
-    except APIConnectionError as exc:
-        logger.error("Could not connect to the OpenAI API: %s", exc)
-        raise APIConnectionError(
-            message=(
-                "Could not connect to the OpenAI API. "
-                "Please check your network connection and try again."
-            ),
-            request=exc.request,
-        ) from exc
+    except APIConnectionError:
+        logger.error("Could not connect to the OpenAI API. Check your network connection.")
+        raise
 
-    except RateLimitError as exc:
-        logger.error("OpenAI rate limit exceeded: %s", exc)
-        raise RateLimitError(
-            message=(
-                "OpenAI rate limit exceeded. "
-                "Please wait a moment before retrying."
-            ),
-            response=exc.response,
-            body=exc.body,
-        ) from exc
+    except RateLimitError:
+        logger.error("OpenAI rate limit exceeded. Wait before retrying.")
+        raise
 
     except APIError as exc:
         logger.error("OpenAI API error: %s", exc)
-        raise APIError(
-            message=f"OpenAI API error: {exc.message}",
-            request=exc.request,
-            body=exc.body,
-        ) from exc
+        raise
