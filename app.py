@@ -12,6 +12,8 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
 from document_reader import extract_text_from_file
+from models import DocumentData
+from extraction_service import evaluate_compliance
 
 app = Flask(__name__, static_folder=".", static_url_path="")
 
@@ -181,6 +183,34 @@ def upload_file():
 def health():
     """Simple health-check endpoint."""
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/evaluate", methods=["POST"])
+def evaluate():
+    """
+    Accept extracted DocumentData as JSON, run compliance evaluation, and return results.
+
+    Request:  application/json matching the DocumentData schema
+    Response: JSON with keys: success, data (DocumentData fields), compliance (status + reasons)
+              or: success, error (on failure)
+    """
+    if not request.is_json:
+        return jsonify({"success": False, "error": "Request must be JSON."}), 415
+
+    try:
+        doc_data = DocumentData(**request.get_json())
+    except Exception:
+        logger.warning("Invalid DocumentData payload", exc_info=True)
+        return jsonify({"success": False, "error": "Invalid payload: could not parse DocumentData fields."}), 400
+
+    compliance = evaluate_compliance(doc_data)
+    return jsonify(
+        {
+            "success": True,
+            "data": doc_data.model_dump(),
+            "compliance": compliance,
+        }
+    )
 
 
 # --------------------------------------------------------------------------- #
