@@ -1,3 +1,8 @@
 pdfplumber
 python-docx
 openpyxl
+pandas
+pdf2image
+pytesseract
+flask
+flask-cors
