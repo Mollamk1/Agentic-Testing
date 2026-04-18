@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Document Reader – Text Extractor</title>
+  <style>
+    /* ===== Reset & Base ===== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #f4f6f9;
+      --surface:   #ffffff;
+      --border:    #d1d9e0;
+      --primary:   #2563eb;
+      --primary-h: #1d4ed8;
+      --success:   #16a34a;
+      --error:     #dc2626;
+      --text:      #1e293b;
+      --muted:     #64748b;
+      --radius:    10px;
+      --shadow:    0 2px 12px rgba(0,0,0,.08);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+
+    /* ===== Layout ===== */
+    .container {
+      width: 100%;
+      max-width: 780px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    header h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: var(--primary);
+    }
+    header p {
+      margin-top: .4rem;
+      color: var(--muted);
+      font-size: .95rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 2rem;
+      margin-bottom: 1.5rem;
+    }
+
+    /* ===== Drop Zone ===== */
+    #drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 2.5rem 1.5rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      outline: none;
+    }
+    #drop-zone:hover,
+    #drop-zone.drag-over {
+      border-color: var(--primary);
+      background: #eff6ff;
+    }
+    #drop-zone svg { display: block; margin: 0 auto 1rem; }
+    #drop-zone p { color: var(--muted); font-size: .95rem; }
+    #drop-zone strong { color: var(--primary); }
+
+    #file-input { display: none; }
+
+    /* ===== Buttons ===== */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: .45rem;
+      padding: .55rem 1.2rem;
+      border-radius: 6px;
+      font-size: .9rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: background .15s, opacity .15s;
+    }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary  { background: var(--primary); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-h); }
+    .btn-ghost    { background: transparent; color: var(--primary); border: 1px solid var(--primary); }
+    .btn-ghost:hover:not(:disabled)   { background: #eff6ff; }
+    .btn-danger   { background: transparent; color: var(--error); border: 1px solid var(--error); }
+    .btn-danger:hover:not(:disabled)  { background: #fef2f2; }
+
+    /* ===== File info chip ===== */
+    #file-info {
+      display: none;
+      align-items: center;
+      gap: .6rem;
+      margin-top: 1rem;
+      padding: .6rem 1rem;
+      background: #f0f9ff;
+      border: 1px solid #bae6fd;
+      border-radius: 6px;
+      font-size: .88rem;
+      color: var(--text);
+    }
+    #file-info span { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* ===== Actions row ===== */
+    .actions {
+      display: flex;
+      gap: .75rem;
+      margin-top: 1.25rem;
+      flex-wrap: wrap;
+    }
+
+    /* ===== Progress ===== */
+    #progress-wrap {
+      display: none;
+      margin-top: 1.25rem;
+    }
+    .progress-label {
+      font-size: .85rem;
+      color: var(--muted);
+      margin-bottom: .4rem;
+    }
+    .progress-bar-track {
+      height: 6px;
+      border-radius: 99px;
+      background: var(--border);
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 99px;
+      background: var(--primary);
+      width: 0%;
+      transition: width .3s ease;
+    }
+    .progress-bar-fill.indeterminate {
+      width: 60%;
+      animation: slide 1.2s ease-in-out infinite alternate;
+    }
+    @keyframes slide {
+      from { margin-left: -60%; }
+      to   { margin-left: 100%; }
+    }
+
+    /* ===== Alert / Error ===== */
+    #alert {
+      display: none;
+      padding: .85rem 1rem;
+      border-radius: 6px;
+      font-size: .9rem;
+      margin-top: 1.25rem;
+    }
+    #alert.error   { background: #fef2f2; border: 1px solid #fecaca; color: var(--error); }
+    #alert.success { background: #f0fdf4; border: 1px solid #bbf7d0; color: var(--success); }
+
+    /* ===== Results ===== */
+    #result-card { display: none; }
+
+    .result-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: .5rem;
+      margin-bottom: 1rem;
+    }
+    .result-header h2 { font-size: 1.1rem; }
+
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: .5rem;
+      margin-bottom: 1.25rem;
+    }
+    .meta-item {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: .6rem .9rem;
+    }
+    .meta-item .label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .meta-item .value { font-size: 1rem; font-weight: 600; margin-top: .15rem; }
+
+    .text-area-wrap { position: relative; }
+    #extracted-text {
+      width: 100%;
+      min-height: 220px;
+      max-height: 500px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: .85rem;
+      line-height: 1.55;
+      resize: vertical;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: .9rem 1rem;
+      background: #f8fafc;
+      color: var(--text);
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .result-actions {
+      display: flex;
+      gap: .75rem;
+      margin-top: .9rem;
+      flex-wrap: wrap;
+    }
+
+    /* ===== Footer ===== */
+    footer {
+      margin-top: auto;
+      padding-top: 2rem;
+      color: var(--muted);
+      font-size: .82rem;
+      text-align: center;
+    }
+
+    /* ===== Responsive ===== */
+    @media (max-width: 520px) {
+      .card { padding: 1.25rem; }
+      header h1 { font-size: 1.35rem; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- ===== Header ===== -->
+  <header>
+    <h1>📄 Document Reader</h1>
+    <p>Upload a PDF, DOCX, or XLSX file to extract its text content.</p>
+  </header>
+
+  <!-- ===== Upload card ===== -->
+  <div class="card">
+
+    <!-- Drop zone -->
+    <div id="drop-zone" role="button" tabindex="0" aria-label="File upload area">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none"
+           stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <p><strong>Click to browse</strong> or drag &amp; drop your file here</p>
+      <p style="margin-top:.35rem;font-size:.82rem;">PDF · DOCX · XLSX &nbsp;|&nbsp; Max 20 MB</p>
+      <input type="file" id="file-input" accept=".pdf,.docx,.xlsx"
+             aria-label="File input" />
+    </div>
+
+    <!-- Selected file chip -->
+    <div id="file-info">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+      </svg>
+      <span id="file-name">—</span>
+      <small id="file-size" style="color:var(--muted);white-space:nowrap;"></small>
+    </div>
+
+    <!-- Progress bar -->
+    <div id="progress-wrap">
+      <p class="progress-label" id="progress-label">Uploading…</p>
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill indeterminate" id="progress-fill"></div>
+      </div>
+    </div>
+
+    <!-- Alert / Error message -->
+    <div id="alert" role="alert"></div>
+
+    <!-- Action buttons -->
+    <div class="actions">
+      <button class="btn btn-primary" id="upload-btn" disabled>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="16 16 12 12 8 16"/>
+          <line x1="12" y1="12" x2="12" y2="21"/>
+          <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+        </svg>
+        Extract Text
+      </button>
+      <button class="btn btn-danger" id="clear-btn" disabled>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+        Clear
+      </button>
+    </div>
+
+  </div><!-- /upload card -->
+
+  <!-- ===== Results card ===== -->
+  <div class="card" id="result-card" aria-live="polite">
+
+    <div class="result-header">
+      <h2>✅ Extraction Result</h2>
+    </div>
+
+    <!-- Metadata chips -->
+    <div class="meta-grid">
+      <div class="meta-item">
+        <div class="label">File</div>
+        <div class="value" id="meta-name" title="">—</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Size</div>
+        <div class="value" id="meta-size">—</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Characters</div>
+        <div class="value" id="meta-chars">—</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Words</div>
+        <div class="value" id="meta-words">—</div>
+      </div>
+      <div class="meta-item" id="meta-pages-item" style="display:none;">
+        <div class="label">Pages</div>
+        <div class="value" id="meta-pages">—</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Time</div>
+        <div class="value" id="meta-time">—</div>
+      </div>
+    </div>
+
+    <!-- Extracted text -->
+    <div class="text-area-wrap">
+      <pre id="extracted-text" aria-label="Extracted text"></pre>
+    </div>
+
+    <!-- Result action buttons -->
+    <div class="result-actions">
+      <button class="btn btn-primary" id="copy-btn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+        </svg>
+        Copy Text
+      </button>
+      <button class="btn btn-ghost" id="new-btn">
+        Upload Another File
+      </button>
+    </div>
+
+  </div><!-- /result card -->
+
+</div><!-- /container -->
+
+<footer>Document Reader &mdash; Powered by Flask &amp; document_reader.py</footer>
+
+<!-- ===== JavaScript ===== -->
+<script>
+  "use strict";
+
+  /* ---------- DOM references ---------- */
+  const dropZone    = document.getElementById("drop-zone");
+  const fileInput   = document.getElementById("file-input");
+  const fileInfo    = document.getElementById("file-info");
+  const fileName    = document.getElementById("file-name");
+  const fileSize    = document.getElementById("file-size");
+  const progressWrap= document.getElementById("progress-wrap");
+  const progressLbl = document.getElementById("progress-label");
+  const progressFill= document.getElementById("progress-fill");
+  const alertBox    = document.getElementById("alert");
+  const uploadBtn   = document.getElementById("upload-btn");
+  const clearBtn    = document.getElementById("clear-btn");
+  const resultCard  = document.getElementById("result-card");
+  const copyBtn     = document.getElementById("copy-btn");
+  const newBtn      = document.getElementById("new-btn");
+  const extractedEl = document.getElementById("extracted-text");
+
+  /* Meta elements */
+  const metaName  = document.getElementById("meta-name");
+  const metaSize  = document.getElementById("meta-size");
+  const metaChars = document.getElementById("meta-chars");
+  const metaWords = document.getElementById("meta-words");
+  const metaTime  = document.getElementById("meta-time");
+  const metaPages = document.getElementById("meta-pages");
+  const metaPagesItem = document.getElementById("meta-pages-item");
+
+  /* ---------- Constants ---------- */
+  const MAX_SIZE_BYTES = 20 * 1024 * 1024;
+  const ALLOWED_EXTS   = ["pdf", "docx", "xlsx"];
+  const API_URL        = "/api/upload";
+
+  /* ---------- State ---------- */
+  let selectedFile = null;
+
+  /* ---------- Helpers ---------- */
+  function showAlert(msg, type = "error") {
+    alertBox.textContent = msg;
+    alertBox.className   = type;
+    alertBox.style.display = "block";
+  }
+  function hideAlert() {
+    alertBox.style.display = "none";
+    alertBox.textContent   = "";
+  }
+  function humanSize(bytes) {
+    if (bytes < 1024)          return bytes + " B";
+    if (bytes < 1024 * 1024)   return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  }
+  function getExt(name) {
+    return name.split(".").pop().toLowerCase();
+  }
+  function fmtNum(n) {
+    return n.toLocaleString();
+  }
+
+  /* ---------- File selection ---------- */
+  function selectFile(file) {
+    if (!file) return;
+
+    const ext = getExt(file.name);
+    if (!ALLOWED_EXTS.includes(ext)) {
+      showAlert(`Unsupported file type ".${ext}". Please use PDF, DOCX, or XLSX.`);
+      resetUI();
+      return;
+    }
+    if (file.size > MAX_SIZE_BYTES) {
+      showAlert(`File is too large (${humanSize(file.size)}). Maximum is 20 MB.`);
+      resetUI();
+      return;
+    }
+
+    hideAlert();
+    selectedFile = file;
+
+    /* Show chip */
+    fileName.textContent = file.name;
+    fileSize.textContent = humanSize(file.size);
+    fileInfo.style.display = "flex";
+
+    /* Enable buttons */
+    uploadBtn.disabled = false;
+    clearBtn.disabled  = false;
+
+    /* Hide previous results */
+    resultCard.style.display = "none";
+  }
+
+  /* ---------- Reset ---------- */
+  function resetUI() {
+    selectedFile = null;
+    fileInput.value      = "";
+    fileInfo.style.display  = "none";
+    progressWrap.style.display = "none";
+    uploadBtn.disabled = true;
+    clearBtn.disabled  = true;
+    resultCard.style.display = "none";
+  }
+
+  /* ---------- Drop zone events ---------- */
+  dropZone.addEventListener("click", () => fileInput.click());
+  dropZone.addEventListener("keydown", e => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); }
+  });
+
+  dropZone.addEventListener("dragover", e => {
+    e.preventDefault();
+    dropZone.classList.add("drag-over");
+  });
+  dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-over"));
+  dropZone.addEventListener("drop", e => {
+    e.preventDefault();
+    dropZone.classList.remove("drag-over");
+    const file = e.dataTransfer.files[0];
+    if (file) selectFile(file);
+  });
+
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files.length) selectFile(fileInput.files[0]);
+  });
+
+  /* ---------- Clear button ---------- */
+  clearBtn.addEventListener("click", () => {
+    hideAlert();
+    resetUI();
+  });
+
+  /* ---------- Upload & extract ---------- */
+  uploadBtn.addEventListener("click", async () => {
+    if (!selectedFile) return;
+
+    /* Show progress */
+    hideAlert();
+    uploadBtn.disabled = true;
+    clearBtn.disabled  = true;
+    progressWrap.style.display = "block";
+    progressLbl.textContent    = "Extracting text…";
+    progressFill.classList.add("indeterminate");
+    resultCard.style.display   = "none";
+
+    const formData = new FormData();
+    formData.append("file", selectedFile);
+
+    try {
+      const response = await fetch(API_URL, {
+        method: "POST",
+        body:   formData,
+      });
+
+      /* Hide progress */
+      progressWrap.style.display = "none";
+      progressFill.classList.remove("indeterminate");
+
+      const data = await response.json();
+
+      if (data.success) {
+        showResult(data);
+      } else {
+        showAlert(data.error || "An unknown error occurred.");
+        uploadBtn.disabled = false;
+        clearBtn.disabled  = false;
+      }
+    } catch (err) {
+      progressWrap.style.display = "none";
+      showAlert("Network error: could not reach the server. Make sure app.py is running.");
+      uploadBtn.disabled = false;
+      clearBtn.disabled  = false;
+    }
+  });
+
+  /* ---------- Show results ---------- */
+  function showResult(data) {
+    const m = data.metadata;
+
+    /* Truncate long filenames in the chip */
+    const shortName = m.file_name.length > 28
+      ? m.file_name.slice(0, 25) + "…"
+      : m.file_name;
+    metaName.textContent  = shortName;
+    metaName.title        = m.file_name;
+    metaSize.textContent  = m.file_size;
+    metaChars.textContent = fmtNum(m.char_count);
+    metaWords.textContent = fmtNum(m.word_count);
+    metaTime.textContent  = m.extraction_time_seconds + "s";
+
+    if (m.pages !== undefined) {
+      metaPages.textContent    = m.pages;
+      metaPagesItem.style.display = "";
+    } else {
+      metaPagesItem.style.display = "none";
+    }
+
+    extractedEl.textContent = data.text || "(No text extracted)";
+    resultCard.style.display = "block";
+
+    /* Scroll to results */
+    resultCard.scrollIntoView({ behavior: "smooth", block: "start" });
+
+    /* Re-enable clear */
+    clearBtn.disabled = false;
+  }
+
+  /* ---------- Copy button ---------- */
+  copyBtn.addEventListener("click", async () => {
+    const txt = extractedEl.textContent;
+    try {
+      await navigator.clipboard.writeText(txt);
+      const orig = copyBtn.innerHTML;
+      copyBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 6 9 17 4 12"/></svg> Copied!`;
+      copyBtn.disabled = true;
+      setTimeout(() => { copyBtn.innerHTML = orig; copyBtn.disabled = false; }, 2000);
+    } catch {
+      /* Fallback: select the text so the user can copy manually.
+         execCommand('copy') is deprecated so we avoid it here. */
+      try {
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(extractedEl);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      } catch (_) { /* ignore selection errors in restricted environments */ }
+      showAlert(
+        "Your browser blocked automatic copy. The text is selected – press Ctrl+C (Cmd+C on Mac) to copy it.",
+        "success"
+      );
+    }
+  });
+
+  /* ---------- Upload another ---------- */
+  newBtn.addEventListener("click", () => {
+    hideAlert();
+    resetUI();
+    fileInput.click();
+  });
+</script>
+
+</body>
+</html>
